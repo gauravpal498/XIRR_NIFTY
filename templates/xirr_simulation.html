@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIFTY XIRR Simulator</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --border: #e2e1dc;
+    --grid: #ecebe7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7974;
+    --series-pe: #2a78d6;    /* slot 1: PE strategy */
+    --series-sip: #eb6834;   /* slot 2: monthly SIP */
+    --neutral-line: #8a8984;
+    --good: #008300;
+    --bad: #c62f2e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --border: #2e2e2c;
+      --grid: #262624;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e88;
+      --series-pe: #3987e5;
+      --series-sip: #d95926;
+      --neutral-line: #8f8e88;
+      --good: #3fae3f;
+      --bad: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --border: #2e2e2c;
+    --grid: #262624;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e88;
+    --series-pe: #3987e5;
+    --series-sip: #d95926;
+    --neutral-line: #8f8e88;
+    --good: #3fae3f;
+    --bad: #e66767;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .sub { color: var(--text-secondary); margin: 0 0 20px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  form.controls { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--text-secondary); }
+  .field input {
+    width: 130px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface-0); color: var(--text-primary); font: inherit;
+  }
+  button {
+    padding: 8px 18px; border: 0; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600;
+    background: var(--series-pe); color: #fff;
+  }
+  button:disabled { opacity: .55; cursor: wait; }
+  #status { color: var(--text-secondary); font-size: 13px; margin-top: 10px; min-height: 1.4em; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--text-secondary); font-weight: 600; font-size: 12px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+  .pos { color: var(--good); }
+  .neg { color: var(--bad); }
+  .kpis { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 14px; color: var(--text-secondary); font-size: 13px; }
+  .kpis b { color: var(--text-primary); font-size: 16px; display: block; }
+  .note { color: var(--text-muted); font-size: 12px; margin: 8px 0 0; }
+  .plot { width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>NIFTY 50: buying when P/E &lt; 20 vs a monthly SIP</h1>
+  <p class="sub" id="subtitle"></p>
+
+  <section class="card">
+    <form class="controls" id="controls">
+      <div class="field"><label for="nsims">Simulations</label><input id="nsims" type="number" min="1" max="100000" step="1" value="1000"></div>
+      <div class="field"><label for="threshold">P/E threshold</label><input id="threshold" type="number" min="1" step="0.5" value="20"></div>
+      <div class="field"><label for="minMonths">Min window (months)</label><input id="minMonths" type="number" min="1" step="1" value="1"></div>
+      <div class="field"><label for="maxMonths">Max window (months)</label><input id="maxMonths" type="number" min="1" step="1"></div>
+      <div class="field"><label for="amount">Amount per buy (₹)</label><input id="amount" type="number" min="1" step="1" value="100"></div>
+      <div class="field"><label for="seed">Seed (blank = random)</label><input id="seed" type="number" step="1" placeholder="random"></div>
+      <button type="submit" id="run">Run simulation</button>
+    </form>
+    <div id="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>XIRR summary</h2>
+    <div class="table-wrap"><table id="stats"></table></div>
+    <div class="kpis" id="kpis"></div>
+    <p class="note">
+      Each simulation picks a random window (length uniform between min and max, start uniform within the data).
+      The P/E strategy buys ₹<span class="amt">100</span> at the close on every trading day in the window with P/E below the threshold.
+      The SIP runs 28 times per window, once for each day of the month from 1 to 28. It buys ₹<span class="amt">100</span> on that day each month, or on the next trading day when that day is a holiday.
+      Both are valued at the last close in the window. Windows with no P/E-below-threshold day are discarded for both strategies.
+      XIRR is annualised, so very short windows produce extreme values.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>XIRR distribution</h2>
+    <div id="hist" class="plot" style="height:380px"></div>
+    <p class="note" id="histNote"></p>
+  </section>
+
+  <section class="card">
+    <h2>Days when P/E was below the threshold</h2>
+    <div id="timeline" class="plot" style="height:520px"></div>
+  </section>
+</main>
+
+<script>
+const DATA = /*__NIFTY_DATA__*/;
+
+// ---------- data prep ----------
+const DAY_MS = 86400000;
+const N = DATA.dates.length;
+const day = new Int32Array(N);           // days since epoch
+for (let i = 0; i < N; i++) day[i] = Math.round(Date.parse(DATA.dates[i] + "T00:00:00Z") / DAY_MS);
+const close = Float64Array.from(DATA.close);
+const pe = DATA.pe.map(v => (v === null ? NaN : v));
+const FIRST = day[0], LAST = day[N - 1];
+const SPAN_MONTHS = Math.floor((LAST - FIRST) / 30.4375);
+
+const fmtDate = d => new Date(d * DAY_MS).toISOString().slice(0, 10);
+
+// first index with day[i] >= target
+function lowerBound(target) {
+  let lo = 0, hi = N;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (day[mid] < target) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
+// ---------- XIRR ----------
+// Flows: amounts[] on days[] (investments negative, final value positive on the last day).
+// NPV is strictly decreasing in r here (all outflows precede the inflow), so the root is unique.
+function xirr(amounts, days) {
+  const n = amounts.length, d0 = days[0];
+  if (days[n - 1] === d0) return null;
+  const t = new Float64Array(n);
+  for (let i = 0; i < n; i++) t[i] = (days[i] - d0) / 365;
+  const npv = r => { const lr = Math.log1p(r); let s = 0; for (let i = 0; i < n; i++) s += amounts[i] * Math.exp(-t[i] * lr); return s; };
+  const dnpv = r => { const lr = Math.log1p(r); let s = 0; for (let i = 0; i < n; i++) s -= t[i] * amounts[i] * Math.exp(-(t[i] + 1) * lr); return s; };
+
+  let lo = -0.999999, hi = 1;
+  while (npv(hi) > 0) { lo = hi; hi *= 4; if (hi > 1e12) return null; }
+  if (npv(lo) < 0) return null;
+  let r = 0.1 < hi && 0.1 > lo ? 0.1 : (lo + hi) / 2;
+  for (let k = 0; k < 200; k++) {
+    const f = npv(r);
+    if (Math.abs(f) < 1e-9) return r;
+    if (f > 0) lo = r; else hi = r;
+    const d = dnpv(r);
+    let next = r - f / d;
+    if (!(next > lo && next < hi) || !isFinite(next)) next = (lo + hi) / 2;   // keep Newton inside the bracket
+    if (Math.abs(next - r) < 1e-12) return next;
+    r = next;
+  }
+  return r;
+}
+
+// ---------- strategies ----------
+function peStrategy(si, ei, threshold, amount) {
+  const amts = [], days = [];
+  let units = 0;
+  for (let i = si; i <= ei; i++) {
+    if (pe[i] < threshold) { units += amount / close[i]; amts.push(-amount); days.push(day[i]); }
+  }
+  if (!amts.length) return null;
+  amts.push(units * close[ei]); days.push(day[ei]);
+  return { xirr: xirr(amts, days), buys: amts.length - 1 };
+}
+
+function sipStrategy(si, ei, startDay, dom, amount) {
+  const amts = [], days = [];
+  let units = 0;
+  const start = new Date(startDay * DAY_MS);
+  let y = start.getUTCFullYear(), m = start.getUTCMonth();
+  for (;;) {
+    const target = Date.UTC(y, m, dom) / DAY_MS;
+    if (++m === 12) { m = 0; y++; }
+    if (target < startDay) continue;
+    const idx = lowerBound(target);       // next trading day on or after the SIP date
+    if (idx > ei) break;
+    units += amount / close[idx]; amts.push(-amount); days.push(day[idx]);
+  }
+  if (!amts.length) return null;
+  amts.push(units * close[ei]); days.push(day[ei]);
+  return { xirr: xirr(amts, days), buys: amts.length - 1 };
+}
+
+// Run one window [startDay, endDay]. Exposed as window.runWindowDates for spot checks.
+function runWindow(startDay, endDay, threshold, amount) {
+  const si = lowerBound(startDay);
+  const ei = lowerBound(endDay + 1) - 1;    // last trading day <= endDay
+  if (ei <= si) return null;
+  const peRes = peStrategy(si, ei, threshold, amount);
+  if (!peRes) return { discarded: true };
+  const sip = [];
+  for (let dom = 1; dom <= 28; dom++) sip.push(sipStrategy(si, ei, startDay, dom, amount));
+  return { start: day[si], end: day[ei], pe: peRes, sip };
+}
+window.runWindowDates = (s, e, thr = 20, amt = 100) =>
+  runWindow(Math.round(Date.parse(s + "T00:00:00Z") / DAY_MS), Math.round(Date.parse(e + "T00:00:00Z") / DAY_MS), thr, amt);
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- stats ----------
+function quantile(sorted, q) {
+  if (!sorted.length) return NaN;
+  const pos = (sorted.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+function summarize(values) {
+  const s = Float64Array.from(values).sort();
+  const mean = s.reduce((a, b) => a + b, 0) / (s.length || 1);
+  return { n: s.length, mean, median: quantile(s, 0.5), min: s[0], p25: quantile(s, 0.25), p75: quantile(s, 0.75), max: s[s.length - 1], sorted: s };
+}
+
+// ---------- UI ----------
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const pct = v => (v === undefined || isNaN(v)) ? "–" : (v * 100).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 }) + "%";
+const pp = v => isNaN(v) ? "–" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + " pp";
+
+$("maxMonths").value = SPAN_MONTHS;
+$("maxMonths").max = SPAN_MONTHS;
+$("subtitle").textContent =
+  `${N.toLocaleString("en-IN")} trading days of NSE data, ${fmtDate(FIRST)} to ${fmtDate(LAST)} (about ${(SPAN_MONTHS / 12).toFixed(1)} years). Generated ${DATA.generated}.`;
+
+let lastResult = null;
+
+function readOptions() {
+  const nsims = Math.max(1, Math.floor(+$("nsims").value || 1000));
+  const threshold = +$("threshold").value || 20;
+  let minM = Math.max(1, +$("minMonths").value || 1);
+  let maxM = Math.min(SPAN_MONTHS, Math.max(minM, +$("maxMonths").value || SPAN_MONTHS));
+  minM = Math.min(minM, maxM);
+  const amount = Math.max(1, +$("amount").value || 100);
+  const seedRaw = $("seed").value.trim();
+  const seed = seedRaw === "" ? Math.floor(Math.random() * 2 ** 31) : Math.floor(+seedRaw);
+  return { nsims, threshold, minM, maxM, amount, seed };
+}
+
+function runSimulation(opts) {
+  const rng = mulberry32(opts.seed);
+  const minLen = Math.round(opts.minM * 30.4375), maxLen = Math.round(opts.maxM * 30.4375);
+  const res = { opts, pe: [], sip: [], sipWindowMedian: [], discarded: 0, failed: 0, kept: 0 };
+  let done = 0;
+  $("run").disabled = true;
+
+  return new Promise(resolve => {
+    function chunk() {
+      const t0 = performance.now();
+      while (done < opts.nsims && performance.now() - t0 < 40) {
+        done++;
+        const len = minLen + Math.round(rng() * (maxLen - minLen));
+        const startDay = FIRST + Math.floor(rng() * (LAST - FIRST - len + 1));
+        const w = runWindow(startDay, startDay + len, opts.threshold, opts.amount);
+        if (!w || w.discarded || w.pe.xirr === null) { res.discarded++; continue; }
+        const sipX = w.sip.filter(s => s && s.xirr !== null).map(s => s.xirr);
+        if (!sipX.length) { res.failed++; continue; }
+        res.kept++;
+        res.pe.push(w.pe.xirr);
+        res.sip.push(...sipX);
+        res.sipWindowMedian.push({ pe: w.pe.xirr, sip: quantile(Float64Array.from(sipX).sort(), 0.5) });
+      }
+      $("status").textContent = `Running… ${done.toLocaleString("en-IN")} / ${opts.nsims.toLocaleString("en-IN")}`;
+      if (done < opts.nsims) setTimeout(chunk, 0);
+      else { $("run").disabled = false; resolve(res); }
+    }
+    chunk();
+  });
+}
+
+function renderStats(res) {
+  const a = summarize(res.pe), b = summarize(res.sip);
+  const rows = [["Average", "mean"], ["Median", "median"], ["Min", "min"], ["P25", "p25"], ["P75", "p75"], ["Max", "max"]];
+  const peCol = css("--series-pe"), sipCol = css("--series-sip");
+  let html = `<thead><tr><th>Statistic</th><th><span class="swatch" style="background:${peCol}"></span>Buy when P/E &lt; ${res.opts.threshold}</th>` +
+             `<th><span class="swatch" style="background:${sipCol}"></span>Monthly SIP (days 1–28)</th><th>P/E minus SIP</th></tr></thead><tbody>`;
+  for (const [label, k] of rows) {
+    const diff = a[k] - b[k];
+    html += `<tr><td>${label}</td><td>${pct(a[k])}</td><td>${pct(b[k])}</td><td class="${diff >= 0 ? "pos" : "neg"}">${pp(diff)}</td></tr>`;
+  }
+  html += `<tr><td>Samples</td><td>${a.n.toLocaleString("en-IN")}</td><td>${b.n.toLocaleString("en-IN")}</td><td></td></tr></tbody>`;
+  $("stats").innerHTML = html;
+
+  const wins = res.sipWindowMedian.filter(x => x.pe > x.sip).length;
+  const winRate = res.sipWindowMedian.length ? wins / res.sipWindowMedian.length : NaN;
+  $("kpis").innerHTML =
+    `<div><b>${res.kept.toLocaleString("en-IN")}</b>windows kept</div>` +
+    `<div><b>${res.discarded.toLocaleString("en-IN")}</b>discarded (no P/E &lt; ${res.opts.threshold} day)</div>` +
+    `<div><b>${pct(winRate)}</b>of windows where P/E beat that window's median SIP</div>` +
+    `<div><b>${res.opts.seed}</b>seed</div>`;
+  document.querySelectorAll(".amt").forEach(el => el.textContent = res.opts.amount.toLocaleString("en-IN"));
+  return { a, b };
+}
+
+function baseLayout() {
+  return {
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    font: { family: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", color: css("--text-secondary"), size: 12 },
+    hoverlabel: { bgcolor: css("--surface-1"), bordercolor: css("--border"), font: { color: css("--text-primary") } },
+    margin: { l: 60, r: 20, t: 10, b: 40 },
+  };
+}
+const axis = extra => Object.assign({ gridcolor: css("--grid"), zerolinecolor: css("--border"), linecolor: css("--border") }, extra);
+
+function renderHistogram(res, a, b) {
+  const all = Float64Array.from([...a.sorted, ...b.sorted]).sort();
+  const lo = quantile(all, 0.02) * 100, hi = quantile(all, 0.98) * 100;
+  const size = Math.max((hi - lo) / 60, 0.1);
+  const bins = { start: Math.floor(lo / size) * size, end: Math.ceil(hi / size) * size + size, size };
+  const trace = (vals, name, color) => ({
+    type: "histogram", x: Array.from(vals, v => v * 100), name, histnorm: "percent", xbins: bins,
+    marker: { color, line: { color: css("--surface-1"), width: 1 } }, opacity: 0.6,
+    hovertemplate: `${name}<br>XIRR %{x}<br>%{y:.1f}% of samples<extra></extra>`,
+  });
+  const median = (v, color) => ({ type: "line", x0: v * 100, x1: v * 100, yref: "paper", y0: 0, y1: 1, line: { color, width: 2, dash: "dash" } });
+  Plotly.react("hist", [
+    trace(a.sorted, `Buy when P/E < ${res.opts.threshold}`, css("--series-pe")),
+    trace(b.sorted, "Monthly SIP", css("--series-sip")),
+  ], Object.assign(baseLayout(), {
+    barmode: "overlay", bargap: 0.04,
+    xaxis: axis({ title: { text: "XIRR (% per year)" }, ticksuffix: "%", range: [lo, hi] }),
+    yaxis: axis({ title: { text: "% of samples" }, ticksuffix: "%" }),
+    legend: { orientation: "h", y: 1.1, x: 0 },
+    shapes: [median(a.median, css("--series-pe")), median(b.median, css("--series-sip"))],
+  }), { responsive: true, displaylogo: false });
+  $("histNote").textContent =
+    `Dashed lines are medians. The x-axis is clipped to the 2nd–98th percentile of all samples (${lo.toFixed(1)}% to ${hi.toFixed(1)}%); the table uses every sample.`;
+}
+
+function renderTimeline(threshold) {
+  const below = [], belowClose = [], belowPe = [];
+  for (let i = 0; i < N; i++) if (pe[i] < threshold) { below.push(DATA.dates[i]); belowClose.push(close[i]); belowPe.push(pe[i]); }
+  const peCol = css("--series-pe"), neutral = css("--neutral-line");
+  Plotly.react("timeline", [
+    { x: DATA.dates, y: DATA.close, type: "scatter", mode: "lines", name: "NIFTY 50 close", line: { color: neutral, width: 1.5 },
+      hovertemplate: "%{x|%d %b %Y}<br>Close ₹%{y:,.2f}<extra></extra>" },
+    { x: below, y: belowClose, type: "scatter", mode: "markers", name: `P/E < ${threshold} (buy day)`, marker: { color: peCol, size: 5 },
+      customdata: belowPe, hovertemplate: "%{x|%d %b %Y}<br>Close ₹%{y:,.2f}<br>P/E %{customdata:.2f}<extra></extra>" },
+    { x: DATA.dates, y: DATA.pe, type: "scatter", mode: "lines", name: "P/E", xaxis: "x", yaxis: "y2", line: { color: neutral, width: 1.5 },
+      showlegend: false, hovertemplate: "%{x|%d %b %Y}<br>P/E %{y:.2f}<extra></extra>" },
+    { x: below, y: belowPe, type: "scatter", mode: "markers", xaxis: "x", yaxis: "y2", marker: { color: peCol, size: 4 },
+      showlegend: false, hoverinfo: "skip" },
+  ], Object.assign(baseLayout(), {
+    grid: { rows: 2, columns: 1, roworder: "top to bottom" },
+    xaxis: axis({ anchor: "y2", rangeslider: { visible: false }, rangeselector: {
+      bgcolor: css("--surface-0"), activecolor: css("--border"), font: { color: css("--text-primary") },
+      buttons: [
+        { count: 1, label: "1Y", step: "year", stepmode: "backward" },
+        { count: 3, label: "3Y", step: "year", stepmode: "backward" },
+        { count: 5, label: "5Y", step: "year", stepmode: "backward" },
+        { step: "all", label: "All" },
+      ] } }),
+    yaxis: axis({ domain: [0.42, 1], title: { text: "Close (₹)" }, tickformat: ",d" }),
+    yaxis2: axis({ domain: [0, 0.34], title: { text: "P/E" } }),
+    hovermode: "x",
+    legend: { orientation: "h", y: 1.1, x: 1, xanchor: "right" },
+    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, yref: "y2", y0: threshold, y1: threshold, line: { color: peCol, width: 1.5, dash: "dash" } }],
+    annotations: [{ xref: "paper", x: 0, yref: "y2", y: threshold, text: `P/E ${threshold}`, showarrow: false, xanchor: "left", yanchor: "bottom",
+      font: { color: css("--text-secondary") } }],
+    margin: { l: 60, r: 20, t: 40, b: 30 },
+  }), { responsive: true, displaylogo: false });
+}
+
+async function run() {
+  const opts = readOptions();
+  const t0 = performance.now();
+  const res = await runSimulation(opts);
+  lastResult = res;
+  render();
+  $("status").textContent =
+    `Ran ${opts.nsims.toLocaleString("en-IN")} simulations in ${((performance.now() - t0) / 1000).toFixed(1)}s ` +
+    `(windows ${opts.minM}–${opts.maxM} months, threshold ${opts.threshold}).` +
+    (res.failed ? ` ${res.failed} windows had no SIP instalment and were skipped.` : "");
+}
+
+function render() {
+  if (!lastResult) return;
+  const { a, b } = renderStats(lastResult);
+  if (a.n) renderHistogram(lastResult, a, b);
+  renderTimeline(lastResult.opts.threshold);
+}
+
+$("controls").addEventListener("submit", e => { e.preventDefault(); run(); });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+run();
+</script>
+</body>
+</html>
